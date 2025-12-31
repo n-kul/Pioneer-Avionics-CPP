@@ -34,6 +34,149 @@
 * 001  MODify   2025-12-30   Nakul Niketan        Corrected BMP280 configuration and read timing
 **************************************************************************************************/
 
+
+/******************************************************************************
+ * BMP280/BME280 Driver for Raspberry Pi Pico
+ * HARDWARE REQUIREMENTS:
+ * - Raspberry Pi Pico or compatible RP2040 board
+ * - BMP280 or BME280 sensor module
+ * - I2C connection (SDA, SCL)
+ * - Pull-up resistors on I2C lines (typically 4.7kΩ, often included on modules)
+ * - Power supply: 1.71V to 3.6V (typically 3.3V from Pico)
+ *
+ * SOFTWARE REQUIREMENTS:
+ * - Pico SDK installed and configured
+ * - CMake build system
+ * - Standard C99 compiler (arm-none-eabi-gcc)
+ * - Required Pico SDK libraries:
+ *   - hardware_i2c
+ *   - pico_time
+ *   - pico_stdlib
+ *
+ * WIRING EXAMPLE:
+ * - BMP280 VCC  -> Pico 3.3V (Pin 36)
+ * - BMP280 GND  -> Pico GND (Pin 38)
+ * - BMP280 SCL  -> Pico GP1 (Pin 2) [or any I2C SCL pin]
+ * - BMP280 SDA  -> Pico GP0 (Pin 1) [or any I2C SDA pin]
+ *
+ * Example Code:
+ * -------------
+ * #include "bmp280.h"
+ * #include "hardware/i2c.h"
+ * 
+ * int main() {
+ *     // 1. Initialize I2C interface
+ *     i2c_init(i2c0, 400 * 1000);  // 400kHz
+ *     gpio_set_function(0, GPIO_FUNC_I2C);  // SDA
+ *     gpio_set_function(1, GPIO_FUNC_I2C);  // SCL
+ *     gpio_pull_up(0);
+ *     gpio_pull_up(1);
+ * 
+ *     // 2. Initialize BMP280 sensor
+ *     bmp280_t sensor;
+ *     if (bmp280_init(&sensor, i2c0, BMP280_I2C_ADDR_PRIM) != BMP280_SUCCESS) {
+ *         printf("Sensor init failed!\n");
+ *         return -1;
+ *     }
+ * 
+ *     // 3. Configure sensor (optional - default config is applied in init)
+ *     bmp280_set_config(&sensor, 
+ *                       BMP280_OSRS_X2,      // Temp oversampling x2
+ *                       BMP280_OSRS_X16,     // Pressure oversampling x16
+ *                       BMP280_FILTER_4,     // IIR filter coefficient 4
+ *                       BMP280_NORMAL_MODE); // Continuous measurements
+ * 
+ *     // 4. Read measurements in loop
+ *     while (1) {
+ *         float temperature, pressure, altitude;
+ *         
+ *         bmp280_read_temperature(&sensor, &temperature);
+ *         bmp280_read_pressure(&sensor, &pressure);
+ *         bmp280_read_altitude(&sensor, 1013.25f, &altitude);
+ *         
+ *         printf("Temp: %.2f°C, Pressure: %.2f Pa, Altitude: %.2fm\n",
+ *                temperature, pressure, altitude);
+ *         
+ *         sleep_ms(1000);
+ *     }
+ * }
+ *
+ * Example Code:
+ * -------------
+ * // Configure for forced mode (sensor sleeps between readings)
+ * bmp280_set_config(&sensor, BMP280_OSRS_X1, BMP280_OSRS_X1,
+ *                   BMP280_FILTER_OFF, BMP280_SLEEP_MODE);
+ * 
+ * while (1) {
+ *     // Trigger single measurement
+ *     bmp280_force_measurement(&sensor);
+ *     
+ *     // Wait for measurement to complete
+ *     uint8_t measuring;
+ *     do {
+ *         bmp280_is_measuring(&sensor, &measuring);
+ *         sleep_ms(5);
+ *     } while (measuring);
+ *     
+ *     // Read results
+ *     float temp, pressure;
+ *     bmp280_read_temperature(&sensor, &temp);
+ *     bmp280_read_pressure(&sensor, &pressure);
+ *     
+ *     // Log data and sleep for extended period
+ *     log_to_flash(temp, pressure);
+ *     sleep_ms(60000);  // Sleep 1 minute between readings
+ * }
+ *
+ * USE CASE - Altitude Tracking:
+ * ================================================
+ * High-speed altitude readings for flight control systems.
+ *
+ * Example Code:
+ * -------------
+ * // Configure for high-speed continuous readings
+ * bmp280_set_config(&sensor, BMP280_OSRS_X1, BMP280_OSRS_X4,
+ *                   BMP280_FILTER_OFF, BMP280_NORMAL_MODE);
+ * bmp280_set_standby(&sensor, BMP280_STANDBY_0_5MS);  // Fastest update
+ * 
+ * float ground_level_pressure;
+ * bmp280_read_pressure(&sensor, &ground_level_pressure);
+ * 
+ * while (flying) {
+ *     float altitude;
+ *     bmp280_read_altitude(&sensor, ground_level_pressure/100.0f, &altitude);
+ *     update_flight_controller(altitude);
+ *     sleep_us(500);  // Read at ~2kHz
+ * }
+ *
+ * FUNCTION REFERENCE:
+ * ===================
+ * 
+ * INITIALIZATION:
+ * - bmp280_init()           : Initialize sensor and load calibration data
+ * - bmp280_reset()          : Software reset of the sensor
+ * 
+ * CONFIGURATION:
+ * - bmp280_set_config()     : Set oversampling, filter, and operating mode
+ * - bmp280_set_standby()    : Set standby time for normal mode
+ * 
+ * MEASUREMENTS:
+ * - bmp280_read_temperature() : Read temperature in Celsius
+ * - bmp280_read_pressure()    : Read pressure in Pascals
+ * - bmp280_read_altitude()    : Calculate altitude in meters
+ * 
+ * CONTROL:
+ * - bmp280_force_measurement() : Trigger single measurement in forced mode
+ * - bmp280_is_measuring()      : Check if measurement is in progress
+ *
+ * NOTES:
+ * - Always read temperature before pressure (or use read_pressure which does this)
+ * - In normal mode, sensor continuously measures at configured intervals
+ * - In forced mode, sensor returns to sleep after each measurement
+ * - Altitude calculation requires accurate sea level pressure for your location
+ * - Higher oversampling = more accurate but slower measurements
+ *****************************************************************************/
+
 #include "bmp280.h"
 #include "pico/time.h"
 #include <math.h>
